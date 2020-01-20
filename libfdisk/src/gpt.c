@@ -522,6 +522,46 @@ static void gpt_fix_alternative_lba(struct fdisk_context *cxt, struct fdisk_gpt_
 	DBG(LABEL, ul_debug("Alternative-LBA updated to: %"PRIu64, le64_to_cpu(p->alternative_lba)));
 }
 
+/* move backup header behind the last partition */
+static void gpt_minimize_alternative_lba(struct fdisk_context *cxt, struct fdisk_gpt_label *gpt)
+{
+	size_t i;
+	uint64_t x = 0, total = 0, orig = cxt->total_sectors;
+	struct gpt_header *hdr;
+
+	assert(cxt);
+	assert(gpt);
+	assert(gpt->pheader);
+	assert(gpt->ents);
+
+	hdr = gpt->pheader;
+
+	/* LBA behind the last partition */
+	for (i = 0; i < gpt_get_nentries(gpt); i++) {
+		struct gpt_entry *e = gpt_get_entry(gpt, i);
+
+		if (gpt_entry_is_used(e)) {
+			uint64_t end = gpt_partition_end(e);
+			if (end > x)
+				x = end;
+		}
+	}
+	total = x + 1;
+
+	/* the current last LBA usable for partitions */
+	gpt_calculate_last_lba(hdr, le32_to_cpu(hdr->npartition_entries), &x, cxt);
+
+	/* size of all stuff at the end of the device */
+	total += cxt->total_sectors - x;
+
+	DBG(LABEL, ul_debug("GPT: minimal device is %"PRIu64, total));
+
+	/* Let's temporary change size of the device to recalculate backup header */
+	cxt->total_sectors = total;
+	gpt_fix_alternative_lba(cxt, gpt);
+	cxt->total_sectors = orig;
+}
+
 /* some universal differences between the headers */
 static void gpt_mknew_header_common(struct fdisk_context *cxt,
 				    struct gpt_header *header, uint64_t lba)
